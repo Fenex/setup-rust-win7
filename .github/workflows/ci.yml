@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Toolchain version (latest / 1.99.0 / 1.99.0-win7.1)'
+        required: false
+        default: 'latest'
+      arch:
+        description: 'Host arch'
+        required: false
+        default: 'x86_64'
+        type: choice
+        options:
+          - x86_64
+          - i686
+
+permissions:
+  contents: read
+
+jobs:
+  smoke-test:
+    name: Install toolchain and build sample
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust Win7 toolchain
+        id: rust
+        uses: ./
+        with:
+          version: ${{ github.event.inputs.version || 'latest' }}
+          arch: ${{ github.event.inputs.arch || 'x86_64' }}
+          cache: true
+
+      - name: Show resolved outputs
+        shell: pwsh
+        run: |
+          Write-Host "toolchain=$env:TOOLCHAIN"
+          Write-Host "release=$env:RELEASE"
+          Write-Host "cache-hit=$env:CACHE_HIT"
+          rustc -V
+          rustup show
+        env:
+          TOOLCHAIN: ${{ steps.rust.outputs.toolchain }}
+          RELEASE: ${{ steps.rust.outputs.release }}
+          CACHE_HIT: ${{ steps.rust.outputs.cache-hit }}
+
+      - name: Create and build sample crate
+        shell: pwsh
+        run: |
+          cargo new --bin sample_app
+          Set-Location sample_app
+          cargo build --release
+          $exe = Get-ChildItem -Path target\release -Filter sample_app.exe | Select-Object -First 1
+          if (-not $exe) { throw 'sample_app.exe not found' }
+          & $exe.FullName

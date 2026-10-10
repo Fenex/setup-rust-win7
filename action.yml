@@ -1,0 +1,130 @@
+name: 'Setup Rust Win7 Toolchain'
+description: 'Install a rust-win7 custom toolchain for building Windows 7+ compatible Rust binaries'
+author: 'Vitaliy Busko'
+
+branding:
+  icon: 'package'
+  color: 'orange'
+
+inputs:
+  version:
+    description: >
+      Toolchain version to install. Accepts a release tag (e.g. "1.99.0-win7.1"),
+      a Rust version (e.g. "1.99.0" — picks the newest matching *-win7* release),
+      or "latest".
+    required: false
+    default: 'latest'
+  arch:
+    description: 'Host architecture of the toolchain: x86_64 or i686'
+    required: false
+    default: 'x86_64'
+  repository:
+    description: 'GitHub repository that hosts the toolchain releases (owner/name)'
+    required: false
+    default: 'Fenex/rust-win7'
+  cache:
+    description: 'Cache the unpacked toolchain between workflow runs'
+    required: false
+    default: 'true'
+  set-default:
+    description: 'Set the installed toolchain as the rustup default'
+    required: false
+    default: 'true'
+  token:
+    description: 'GitHub token for release API requests (avoids rate limits)'
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  toolchain:
+    description: 'Installed rustup toolchain name (e.g. 1.99.0-x86_64-win7-windows-msvc)'
+    value: ${{ steps.resolve.outputs.toolchain }}
+  release:
+    description: 'Resolved GitHub release tag'
+    value: ${{ steps.resolve.outputs.release }}
+  rust-version:
+    description: 'Rust version portion (e.g. 1.99.0)'
+    value: ${{ steps.resolve.outputs.rust-version }}
+  cache-hit:
+    description: 'Whether the toolchain was restored from cache'
+    value: ${{ steps.cache-meta.outputs.cache-hit }}
+
+runs:
+  using: composite
+  steps:
+    - name: Validate runner
+      shell: pwsh
+      run: |
+        if ($env:RUNNER_OS -ne 'Windows') {
+          throw "This action requires a Windows runner (runs-on: windows-latest). Current OS: $env:RUNNER_OS"
+        }
+        $arch = '${{ inputs.arch }}'.Trim().ToLowerInvariant()
+        if ($arch -notin @('x86_64', 'i686')) {
+          throw "Unsupported arch '$arch'. Use x86_64 or i686."
+        }
+
+    - name: Resolve toolchain release
+      id: resolve
+      shell: pwsh
+      env:
+        INPUT_VERSION: ${{ inputs.version }}
+        INPUT_ARCH: ${{ inputs.arch }}
+        INPUT_REPOSITORY: ${{ inputs.repository }}
+        INPUT_TOKEN: ${{ inputs.token }}
+      run: |
+        & "${{ github.action_path }}/scripts/Resolve-Toolchain.ps1"
+
+    - name: Ensure rustup
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Restore toolchain cache
+      id: cache
+      if: inputs.cache == 'true'
+      uses: actions/cache@v4
+      with:
+        path: ${{ steps.resolve.outputs.toolchain-path }}
+        key: rust-win7-${{ runner.os }}-${{ steps.resolve.outputs.toolchain }}-${{ steps.resolve.outputs.release }}
+
+    - name: Record cache result
+      id: cache-meta
+      shell: pwsh
+      run: |
+        $hit = 'false'
+        if ('${{ inputs.cache }}' -eq 'true' -and '${{ steps.cache.outputs.cache-hit }}' -eq 'true') {
+          $hit = 'true'
+        }
+        "cache-hit=$hit" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+        Write-Host "cache-hit=$hit"
+
+    - name: Download and install toolchain
+      if: steps.cache-meta.outputs.cache-hit != 'true'
+      shell: pwsh
+      env:
+        TOOLCHAIN: ${{ steps.resolve.outputs.toolchain }}
+        TOOLCHAIN_PATH: ${{ steps.resolve.outputs.toolchain-path }}
+        RELEASE: ${{ steps.resolve.outputs.release }}
+        ASSET_URL: ${{ steps.resolve.outputs.asset-url }}
+        ASSET_NAME: ${{ steps.resolve.outputs.asset-name }}
+      run: |
+        & "${{ github.action_path }}/scripts/Install-Toolchain.ps1"
+
+    - name: Activate toolchain
+      shell: pwsh
+      env:
+        TOOLCHAIN: ${{ steps.resolve.outputs.toolchain }}
+        SET_DEFAULT: ${{ inputs.set-default }}
+      run: |
+        $toolchain = $env:TOOLCHAIN
+        $path = Join-Path $env:USERPROFILE ".rustup\toolchains\$toolchain"
+        if (-not (Test-Path -LiteralPath $path)) {
+          throw "Toolchain directory not found: $path"
+        }
+
+        if ($env:SET_DEFAULT -eq 'true') {
+          rustup default $toolchain
+        }
+
+        "RUSTUP_TOOLCHAIN=$toolchain" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+        Write-Host "Activated toolchain: $toolchain"
+        rustc -V
+        rustup show

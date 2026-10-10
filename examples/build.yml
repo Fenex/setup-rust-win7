@@ -1,0 +1,28 @@
+# Copy into your repository as .github/workflows/build-win7.yml
+name: Build for Windows 7+
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust Win7 toolchain
+        uses: Fenex/setup-rust-win7@v1
+        with:
+          version: '1.99.0'   # latest | 1.99.0 | 1.99.0-win7.1
+          arch: x86_64
+          cache: true
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-bin
+          path: target/release/*.exe
