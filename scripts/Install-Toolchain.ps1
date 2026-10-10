@@ -89,6 +89,8 @@ if (-not (Test-Path -LiteralPath $rustc)) {
     throw "Installation looks incomplete: missing $rustc"
 }
 
+& "$PSScriptRoot\Write-ChannelManifest.ps1"
+
 Write-Host "Installed toolchain to $toolchainPath"
 
 # Cleanup temp artifacts (keep unpacked toolchain)

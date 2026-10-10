@@ -112,19 +112,36 @@ runs:
       shell: pwsh
       env:
         TOOLCHAIN: ${{ steps.resolve.outputs.toolchain }}
+        TOOLCHAIN_PATH: ${{ steps.resolve.outputs.toolchain-path }}
         SET_DEFAULT: ${{ inputs.set-default }}
       run: |
         $toolchain = $env:TOOLCHAIN
-        $path = Join-Path $env:USERPROFILE ".rustup\toolchains\$toolchain"
+        $path = $env:TOOLCHAIN_PATH
         if (-not (Test-Path -LiteralPath $path)) {
           throw "Toolchain directory not found: $path"
         }
 
+        # Cache hits skip unpack, so a previously cached toolchain may still
+        # lack the channel manifest. Writing it here covers that path too.
+        & "${{ github.action_path }}/scripts/Write-ChannelManifest.ps1"
+
         if ($env:SET_DEFAULT -eq 'true') {
-          rustup default $toolchain
+          # rustup treats *-win7-windows-msvc as a different OS from the
+          # runner host (*-pc-windows-msvc) and refuses rustup default
+          # unless this flag is set. The toolchain is already on disk.
+          rustup default $toolchain --force-non-host
+          if ($LASTEXITCODE -ne 0) {
+            throw "rustup default failed with exit code $LASTEXITCODE"
+          }
         }
 
         "RUSTUP_TOOLCHAIN=$toolchain" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
         Write-Host "Activated toolchain: $toolchain"
         rustc -V
+        if ($LASTEXITCODE -ne 0) {
+          throw "rustc -V failed with exit code $LASTEXITCODE"
+        }
         rustup show
+        if ($LASTEXITCODE -ne 0) {
+          throw "rustup show failed with exit code $LASTEXITCODE"
+        }
